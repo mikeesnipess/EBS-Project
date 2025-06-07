@@ -1,0 +1,149 @@
+syntax = "proto3";
+
+package ecommerce;
+
+// Base message for all e-commerce events
+message EcommerceEvent {
+  string event_id = 1;
+  int64 timestamp = 2;
+  EventType event_type = 3;
+  
+  oneof event_data {
+    Purchase purchase = 4;
+    ProductView product_view = 5;
+    InventoryUpdate inventory_update = 6;
+    UserRating user_rating = 7;
+  }
+}
+
+enum EventType {
+  PURCHASE = 0;
+  PRODUCT_VIEW = 1;
+  INVENTORY_UPDATE = 2;
+  USER_RATING = 3;
+}
+
+// Purchase event
+message Purchase {
+  string user_id = 1;
+  string product_id = 2;
+  string category = 3;
+  double price = 4;
+  int32 quantity = 5;
+  string warehouse_id = 6;
+}
+
+// Product view event
+message ProductView {
+  string user_id = 1;
+  string product_id = 2;
+  string category = 3;
+  int32 view_duration = 4;
+  string source = 5; // web, mobile, app
+}
+
+// Inventory update event
+message InventoryUpdate {
+  string product_id = 1;
+  string category = 2;
+  int32 stock_level = 3;
+  string warehouse_id = 4;
+  string operation = 5; // restock, sale, return
+}
+
+// User rating event
+message UserRating {
+  string user_id = 1;
+  string product_id = 2;
+  string category = 3;
+  double rating = 4; // 1.0 to 5.0
+  string review_text = 5;
+}
+
+// Subscription messages
+message Subscription {
+  string subscription_id = 1;
+  string subscriber_id = 2;
+  SubscriptionType type = 3;
+  repeated FilterCondition conditions = 4;
+  WindowConfig window_config = 5; // Only for complex subscriptions
+}
+
+enum SubscriptionType {
+  SIMPLE = 0;
+  COMPLEX = 1; // Windowed
+}
+
+message FilterCondition {
+  string field_name = 1;
+  ComparisonOperator operator = 2;
+  string value = 3;
+  bool is_windowed = 4; // For avg_, max_, min_ etc.
+}
+
+enum ComparisonOperator {
+  EQUAL = 0;
+  NOT_EQUAL = 1;
+  GREATER_THAN = 2;
+  GREATER_EQUAL = 3;
+  LESS_THAN = 4;
+  LESS_EQUAL = 5;
+}
+
+message WindowConfig {
+  int32 window_size = 1; // Number of events in window
+  string aggregation_type = 2; // avg, max, min, sum, count
+}
+
+// Notification messages
+message Notification {
+  string notification_id = 1;
+  string subscription_id = 2;
+  string subscriber_id = 3;
+  int64 timestamp = 4;
+  
+  oneof notification_data {
+    SimpleNotification simple = 5;
+    ComplexNotification complex = 6;
+  }
+}
+
+message SimpleNotification {
+  EcommerceEvent matched_event = 1;
+}
+
+message ComplexNotification {
+  string category = 1;
+  string field_name = 2;
+  double aggregated_value = 3;
+  int32 window_size = 4;
+  bool condition_met = 5;
+}
+
+// Broker communication messages
+message BrokerMessage {
+  string message_id = 1;
+  int64 timestamp = 2;
+  MessageType type = 3;
+  
+  oneof message_data {
+    EcommerceEvent event = 4;
+    Subscription subscription = 5;
+    Notification notification = 6;
+    BrokerHeartbeat heartbeat = 7;
+  }
+}
+
+enum MessageType {
+  EVENT = 0;
+  SUBSCRIPTION = 1;
+  NOTIFICATION = 2;
+  HEARTBEAT = 3;
+}
+
+message BrokerHeartbeat {
+  string broker_id = 1;
+  string status = 2;
+  int32 active_subscriptions = 3;
+  int32 processed_events = 4;
+} 

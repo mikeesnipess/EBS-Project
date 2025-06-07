@@ -1,0 +1,903 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>E-commerce Publish/Subscribe System - Dashboard</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.0/socket.io.js"></script>
+    <style>
+        .card { margin-bottom: 20px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+        .status-indicator { width: 12px; height: 12px; border-radius: 50%; display: inline-block; margin-right: 8px; }
+        .status-running { background-color: #28a745; }
+        .status-stopped { background-color: #dc3545; }
+        .metric-card { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; }
+        .event-log { height: 300px; overflow-y: auto; background-color: #f8f9fa; padding: 10px; border-radius: 5px; font-family: monospace; font-size: 12px; }
+        .notification-badge { position: absolute; top: -5px; right: -5px; }
+    </style>
+</head>
+<body class="bg-light">
+    <nav class="navbar navbar-dark bg-primary">
+        <div class="container-fluid">
+            <span class="navbar-brand mb-0 h1">
+                <i class="fas fa-stream"></i> E-commerce Publish/Subscribe System
+            </span>
+            <div class="d-flex">
+                <span class="status-indicator" id="systemStatus"></span>
+                <span id="systemStatusText">System Stopped</span>
+            </div>
+        </div>
+    </nav>
+
+    <div class="container-fluid mt-4">
+        <!-- System Control Row -->
+        <div class="row">
+            <div class="col-12">
+                <div class="card">
+                    <div class="card-header">
+                        <h5><i class="fas fa-power-off"></i> System Control</h5>
+                    </div>
+                    <div class="card-body">
+                        <button id="startBtn" class="btn btn-success me-2" onclick="startSystem()">
+                            <i class="fas fa-play"></i> Start System
+                        </button>
+                        <button id="stopBtn" class="btn btn-danger" onclick="stopSystem()" disabled>
+                            <i class="fas fa-stop"></i> Stop System
+                        </button>
+                        <button id="refreshBtn" class="btn btn-info ms-2" onclick="refreshStats()">
+                            <i class="fas fa-sync"></i> Refresh Stats
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Statistics Row -->
+        <div class="row">
+            <div class="col-md-3">
+                <div class="card metric-card">
+                    <div class="card-body text-center">
+                        <h2 id="eventsPublished">0</h2>
+                        <p><i class="fas fa-paper-plane"></i> Events Published</p>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="card metric-card">
+                    <div class="card-body text-center">
+                        <h2 id="notificationsReceived">0</h2>
+                        <p><i class="fas fa-bell"></i> Notifications Received</p>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="card metric-card">
+                    <div class="card-body text-center">
+                        <h2 id="activeSubscriptions">0</h2>
+                        <p><i class="fas fa-list"></i> Active Subscriptions</p>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="card metric-card">
+                    <div class="card-body text-center">
+                        <h2 id="matchRate">0%</h2>
+                        <p><i class="fas fa-bullseye"></i> Match Rate</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Main Content Row -->
+        <div class="row">
+            <!-- Send Events -->
+            <div class="col-md-6">
+                <div class="card">
+                    <div class="card-header">
+                        <h5><i class="fas fa-plus-circle"></i> Send Custom Event</h5>
+                    </div>
+                    <div class="card-body">
+                        <form id="eventForm">
+                            <div class="mb-3">
+                                <label class="form-label">Event Type</label>
+                                <select class="form-select" id="eventType" onchange="updateEventForm()">
+                                    <option value="purchase">Purchase</option>
+                                    <option value="view">Product View</option>
+                                    <option value="rating">User Rating</option>
+                                    <option value="inventory">Inventory Update</option>
+                                </select>
+                            </div>
+                            
+                            <div id="eventFields">
+                                <!-- Dynamic fields will be inserted here -->
+                            </div>
+                            
+                            <button type="submit" class="btn btn-primary">
+                                <i class="fas fa-send"></i> Send Event
+                            </button>
+                        </form>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Create Subscription -->
+            <div class="col-md-6">
+                <div class="card">
+                    <div class="card-header">
+                        <h5><i class="fas fa-filter"></i> Create Subscription</h5>
+                    </div>
+                    <div class="card-body">
+                        <form id="subscriptionForm">
+                            <div class="mb-3">
+                                <label class="form-label">Subscription ID</label>
+                                <input type="text" class="form-control" id="subscriptionId" placeholder="e.g., high_value_purchases">
+                            </div>
+                            <div class="mb-3">
+                                <label class="form-label">Field Name</label>
+                                <select class="form-select" id="fieldName">
+                                    <option value="category">Category</option>
+                                    <option value="price">Price</option>
+                                    <option value="stock_level">Stock Level</option>
+                                    <option value="rating">Rating</option>
+                                    <option value="user_id">User ID</option>
+                                </select>
+                            </div>
+                            <div class="mb-3">
+                                <label class="form-label">Operator</label>
+                                <select class="form-select" id="operator">
+                                    <option value="EQUAL">Equal (=)</option>
+                                    <option value="GREATER_THAN">Greater Than (>)</option>
+                                    <option value="LESS_THAN">Less Than (<)</option>
+                                    <option value="GREATER_EQUAL">Greater or Equal (>=)</option>
+                                    <option value="LESS_EQUAL">Less or Equal (<=)</option>
+                                </select>
+                            </div>
+                            <div class="mb-3">
+                                <label class="form-label">Value</label>
+                                <input type="text" class="form-control" id="value" placeholder="e.g., Electronics, 100.0, 5">
+                            </div>
+                            <button type="submit" class="btn btn-success">
+                                <i class="fas fa-plus"></i> Create Subscription
+                            </button>
+                        </form>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Event Logs -->
+        <div class="row">
+            <div class="col-md-6">
+                <div class="card">
+                    <div class="card-header d-flex justify-content-between align-items-center">
+                        <h5><i class="fas fa-paper-plane text-primary"></i> Published Events 
+                            <span id="eventProcessingIndicator" class="spinner-border spinner-border-sm text-primary ms-2" style="display: none;"></span>
+                        </h5>
+                        <div>
+                            <span class="badge bg-primary" id="publishedEventCount">0</span>
+                            <button class="btn btn-sm btn-outline-primary ms-2" onclick="refreshEventLogs()">
+                                <i class="fas fa-sync"></i>
+                            </button>
+                        </div>
+                    </div>
+                    <div class="card-body">
+                        <div id="publishedEventsLog" class="event-log" style="height: 450px; overflow-y: auto; background-color: #f8f9fa; padding: 10px; border-radius: 5px; font-family: monospace; font-size: 12px;">
+                            <div class="text-muted text-center">No events published yet...</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-6">
+                <div class="card">
+                    <div class="card-header d-flex justify-content-between align-items-center">
+                        <h5><i class="fas fa-bell text-success"></i> Received Notifications
+                            <span id="notificationProcessingIndicator" class="spinner-border spinner-border-sm text-success ms-2" style="display: none;"></span>
+                        </h5>
+                        <div>
+                            <span class="badge bg-success" id="receivedNotificationCount">0</span>
+                            <button class="btn btn-sm btn-outline-success ms-2" onclick="refreshEventLogs()">
+                                <i class="fas fa-sync"></i>
+                            </button>
+                        </div>
+                    </div>
+                    <div class="card-body">
+                        <div id="receivedNotificationsLog" class="event-log" style="height: 450px; overflow-y: auto; background-color: #f8f9fa; padding: 10px; border-radius: 5px; font-family: monospace; font-size: 12px;">
+                            <div class="text-muted text-center">No notifications received yet...</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- System Log -->
+        <div class="row">
+            <div class="col-12">
+                <div class="card">
+                    <div class="card-header d-flex justify-content-between align-items-center">
+                        <h5><i class="fas fa-terminal"></i> System Log</h5>
+                        <button class="btn btn-sm btn-outline-secondary" onclick="clearLog()">
+                            <i class="fas fa-eraser"></i> Clear
+                        </button>
+                    </div>
+                    <div class="card-body">
+                        <div id="eventLog" class="event-log"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        // Logging function
+        function logEvent(message, type = 'info') {
+            const log = document.getElementById('eventLog');
+            const timestamp = new Date().toLocaleTimeString();
+            const className = type === 'error' ? 'text-danger' : type === 'success' ? 'text-success' : 'text-info';
+            
+            log.innerHTML += `<div class="${className}">[${timestamp}] ${message}</div>`;
+            log.scrollTop = log.scrollHeight;
+        }
+        
+        // Initialize Socket.IO connection after logEvent is defined
+        console.log('🔧 Initializing Socket.IO connection...');
+        
+        const socket = io({
+            debug: true,
+            transports: ['websocket', 'polling']
+        });
+        
+        // Debug connection events
+        socket.on('connect', function() {
+            console.log('✅ Socket.IO connected successfully');
+            logEvent('🔌 WebSocket connected', 'success');
+        });
+        
+        socket.on('disconnect', function() {
+            console.log('❌ Socket.IO disconnected');
+            logEvent('🔌 WebSocket disconnected', 'error');
+        });
+        
+        socket.on('connect_error', function(error) {
+            console.error('❌ Socket.IO connection error:', error);
+            logEvent('🔌 WebSocket connection error: ' + error, 'error');
+        });
+        
+        // Catch-all event handler for debugging
+        socket.onAny((eventName, ...args) => {
+            console.log(`🎯 WebSocket event received: ${eventName}`, args);
+        });
+
+        // Product mappings by category
+        const productsByCategory = {
+            'Electronics': ['LAPTOP123', 'PHONE456', 'TABLET789', 'CAMERA001', 'HEADPHONE002'],
+            'Clothing': ['SHIRT001', 'PANTS002', 'DRESS003', 'SHOES005', 'JACKET001'],
+            'Home & Garden': ['CHAIR001', 'TABLE002', 'PLANT004', 'TOOL005', 'LAMP003'],
+            'Sports': ['SHOES003', 'BAG004', 'WATCH005', 'BALL001', 'RACKET002'],
+            'Books': ['BOOK003', 'BOOK004', 'MAGAZINE001', 'TEXTBOOK002', 'NOVEL003'],
+            'Health': ['VITAMIN001', 'MEDICINE002', 'BANDAGE003', 'SUPPLEMENT005', 'THERMOMETER001'],
+            'Beauty': ['LIPSTICK001', 'CREAM002', 'MASK005', 'BRUSH004', 'PERFUME001'],
+            'Automotive': ['TIRE001', 'BATTERY003', 'OIL002', 'FILTER004', 'BRAKE005'],
+            'Toys': ['DOLL001', 'GAME004', 'ROBOT005', 'PUZZLE002', 'BLOCKS003'],
+            'Food': ['SNACK001', 'DRINK002', 'SAUCE004', 'CANDY003', 'CEREAL001']
+        };
+
+        // Generate product dropdown HTML for a given category
+        function generateProductDropdown(category, nameAttribute = 'product_name') {
+            const products = productsByCategory[category] || [];
+            let options = products.map(product => 
+                `<option value="${product}">${product}</option>`
+            ).join('');
+            
+            return `
+                <div class="mb-3">
+                    <label class="form-label">Product Name</label>
+                    <select class="form-select" name="${nameAttribute}">
+                        <option value="">Select a product...</option>
+                        ${options}
+                    </select>
+                </div>
+            `;
+        }
+
+        // Form templates for different event types with dynamic product dropdowns
+        const eventFormTemplates = {
+            purchase: `
+                <div class="mb-3">
+                    <label class="form-label">Category</label>
+                    <select class="form-select" name="category" onchange="updateProductDropdown()">
+                        <option value="Electronics">Electronics</option>
+                        <option value="Clothing">Clothing</option>
+                        <option value="Home & Garden">Home & Garden</option>
+                        <option value="Sports">Sports</option>
+                        <option value="Books">Books</option>
+                        <option value="Health">Health</option>
+                        <option value="Beauty">Beauty</option>
+                        <option value="Automotive">Automotive</option>
+                        <option value="Toys">Toys</option>
+                        <option value="Food">Food</option>
+                    </select>
+                </div>
+                <div class="mb-3">
+                    <label class="form-label">Price ($)</label>
+                    <input type="number" class="form-control" name="price" step="0.01" placeholder="99.99">
+                </div>
+                <div id="productDropdownContainer">
+                    ${generateProductDropdown('Electronics')}
+                </div>
+                <div class="mb-3">
+                    <label class="form-label">User ID</label>
+                    <input type="text" class="form-control" name="user_id" placeholder="user123">
+                </div>
+            `,
+            view: `
+                <div class="mb-3">
+                    <label class="form-label">Category</label>
+                    <select class="form-select" name="category" onchange="updateProductDropdown()">
+                        <option value="Electronics">Electronics</option>
+                        <option value="Clothing">Clothing</option>
+                        <option value="Home & Garden">Home & Garden</option>
+                        <option value="Sports">Sports</option>
+                        <option value="Books">Books</option>
+                        <option value="Health">Health</option>
+                        <option value="Beauty">Beauty</option>
+                        <option value="Automotive">Automotive</option>
+                        <option value="Toys">Toys</option>
+                        <option value="Food">Food</option>
+                    </select>
+                </div>
+                <div id="productDropdownContainer">
+                    ${generateProductDropdown('Electronics')}
+                </div>
+                <div class="mb-3">
+                    <label class="form-label">User ID</label>
+                    <input type="text" class="form-control" name="user_id" placeholder="user123">
+                </div>
+            `,
+            rating: `
+                <div class="mb-3">
+                    <label class="form-label">Category</label>
+                    <select class="form-select" name="category">
+                        <option value="Electronics">Electronics</option>
+                        <option value="Clothing">Clothing</option>
+                        <option value="Home & Garden">Home & Garden</option>
+                        <option value="Sports">Sports</option>
+                        <option value="Books">Books</option>
+                        <option value="Health">Health</option>
+                        <option value="Beauty">Beauty</option>
+                        <option value="Automotive">Automotive</option>
+                        <option value="Toys">Toys</option>
+                        <option value="Food">Food</option>
+                    </select>
+                </div>
+                <div class="mb-3">
+                    <label class="form-label">Rating (1-5)</label>
+                    <input type="number" class="form-control" name="rating" min="1" max="5" step="0.1" placeholder="4.5">
+                </div>
+                <div class="mb-3">
+                    <label class="form-label">User ID</label>
+                    <input type="text" class="form-control" name="user_id" placeholder="user123">
+                </div>
+            `,
+            inventory: `
+                <div class="mb-3">
+                    <label class="form-label">Category</label>
+                    <select class="form-select" name="category">
+                        <option value="Electronics">Electronics</option>
+                        <option value="Clothing">Clothing</option>
+                        <option value="Home & Garden">Home & Garden</option>
+                        <option value="Sports">Sports</option>
+                        <option value="Books">Books</option>
+                        <option value="Health">Health</option>
+                        <option value="Beauty">Beauty</option>
+                        <option value="Automotive">Automotive</option>
+                        <option value="Toys">Toys</option>
+                        <option value="Food">Food</option>
+                    </select>
+                </div>
+                <div class="mb-3">
+                    <label class="form-label">Stock Level</label>
+                    <input type="number" class="form-control" name="stock_level" min="0" placeholder="25">
+                </div>
+                <div class="mb-3">
+                    <label class="form-label">Warehouse ID</label>
+                    <input type="text" class="form-control" name="warehouse_id" placeholder="WH001">
+                </div>
+            `
+        };
+        
+        // Update product dropdown based on selected category
+        function updateProductDropdown() {
+            const categorySelect = document.querySelector('#eventFields select[name="category"]');
+            const productContainer = document.getElementById('productDropdownContainer');
+            
+            if (categorySelect && productContainer) {
+                const selectedCategory = categorySelect.value;
+                productContainer.innerHTML = generateProductDropdown(selectedCategory);
+            }
+        }
+        
+        // Update event form based on selected type
+        function updateEventForm() {
+            const eventType = document.getElementById('eventType').value;
+            document.getElementById('eventFields').innerHTML = eventFormTemplates[eventType];
+        }
+        
+        // Initialize form
+        updateEventForm();
+        
+        // Handle event form submission
+        document.getElementById('eventForm').addEventListener('submit', function(e) {
+            e.preventDefault();
+            
+            const formData = new FormData(this);
+            const data = {
+                event_type: document.getElementById('eventType').value
+            };
+            
+            for (let [key, value] of formData.entries()) {
+                data[key] = value;
+            }
+            
+            fetch('/api/events/send', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify(data)
+            })
+            .then(response => response.json())
+            .then(result => {
+                if (result.status === 'success') {
+                    logEvent(`✅ ${result.message} (${result.matches} matches)`, 'success');
+                } else {
+                    logEvent(`❌ Error: ${result.message}`, 'error');
+                }
+            })
+            .catch(error => {
+                logEvent(`❌ Network error: ${error}`, 'error');
+            });
+        });
+        
+        // Handle subscription form submission
+        document.getElementById('subscriptionForm').addEventListener('submit', function(e) {
+            e.preventDefault();
+            
+            const data = {
+                subscription_id: document.getElementById('subscriptionId').value,
+                field_name: document.getElementById('fieldName').value,
+                operator: document.getElementById('operator').value,
+                value: document.getElementById('value').value
+            };
+            
+            fetch('/api/subscriptions/create', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify(data)
+            })
+            .then(response => response.json())
+            .then(result => {
+                if (result.status === 'success') {
+                    logEvent(`✅ ${result.message}`, 'success');
+                    this.reset();
+                } else {
+                    logEvent(`❌ Error: ${result.message}`, 'error');
+                }
+            })
+            .catch(error => {
+                logEvent(`❌ Network error: ${error}`, 'error');
+            });
+        });
+        
+        // System control functions
+        function startSystem() {
+            fetch('/api/system/start', { method: 'POST' })
+            .then(response => response.json())
+            .then(result => {
+                if (result.status === 'success') {
+                    updateSystemStatus(true);
+                    logEvent(`🚀 ${result.message}`, 'success');
+                } else {
+                    logEvent(`❌ Error: ${result.message}`, 'error');
+                }
+            });
+        }
+        
+        function stopSystem() {
+            fetch('/api/system/stop', { method: 'POST' })
+            .then(response => response.json())
+            .then(result => {
+                if (result.status === 'success') {
+                    updateSystemStatus(false);
+                    logEvent(`🛑 ${result.message}`, 'info');
+                } else {
+                    logEvent(`❌ Error: ${result.message}`, 'error');
+                }
+            });
+        }
+        
+        function refreshStats() {
+            fetch('/api/stats')
+            .then(response => response.json())
+            .then(stats => {
+                // Update all statistics manually
+                document.getElementById('eventsPublished').textContent = stats.events_published || 0;
+                document.getElementById('notificationsReceived').textContent = stats.notifications_received || 0;
+                document.getElementById('activeSubscriptions').textContent = stats.active_subscriptions || 0;
+                
+                // Calculate match rate
+                const matchRate = stats.events_published > 0 ? 
+                    ((stats.notifications_received / stats.events_published) * 100).toFixed(1) : 0;
+                document.getElementById('matchRate').textContent = matchRate + '%';
+                
+                logEvent(`📊 Stats refreshed: ${stats.active_subscriptions || 0} subscriptions, ${stats.events_published || 0} events, ${stats.notifications_received || 0} notifications`, 'info');
+            })
+            .catch(error => {
+                logEvent(`❌ Failed to refresh stats: ${error}`, 'error');
+            });
+        }
+        
+        function updateSystemStatus(running) {
+            const statusIndicator = document.getElementById('systemStatus');
+            const statusText = document.getElementById('systemStatusText');
+            const startBtn = document.getElementById('startBtn');
+            const stopBtn = document.getElementById('stopBtn');
+            
+            if (running) {
+                statusIndicator.className = 'status-indicator status-running';
+                statusText.textContent = 'System Running';
+                startBtn.disabled = true;
+                stopBtn.disabled = false;
+            } else {
+                statusIndicator.className = 'status-indicator status-stopped';
+                statusText.textContent = 'System Stopped';
+                startBtn.disabled = false;
+                stopBtn.disabled = true;
+            }
+        }
+        
+        // Throttling for UI updates
+        let eventUpdateQueue = [];
+        let notificationUpdateQueue = [];
+        let isUpdatingEvents = false;
+        let isUpdatingNotifications = false;
+
+        // Enhanced logging functions with throttling
+        function logPublishedEvent(eventData) {
+            console.log('🔥 logPublishedEvent called with:', eventData);
+            
+            // Add to queue and process if not already processing
+            eventUpdateQueue.push(eventData);
+            if (!isUpdatingEvents) {
+                processEventQueue();
+            }
+        }
+        
+        function processEventQueue() {
+            if (eventUpdateQueue.length === 0) {
+                isUpdatingEvents = false;
+                document.getElementById('eventProcessingIndicator').style.display = 'none';
+                return;
+            }
+            
+            isUpdatingEvents = true;
+            document.getElementById('eventProcessingIndicator').style.display = 'inline-block';
+            const eventData = eventUpdateQueue.shift();
+            
+            const log = document.getElementById('publishedEventsLog');
+            const count = document.getElementById('publishedEventCount');
+            
+            if (!log || !count) {
+                console.error('❌ Could not find log elements:', { log: !!log, count: !!count });
+                // Continue processing queue
+                setTimeout(processEventQueue, 10);
+                return;
+            }
+            
+            // Remove "no events" message if it exists
+            const noEventsMessage = log.querySelector('.text-muted.text-center');
+            if (noEventsMessage) {
+                noEventsMessage.remove();
+            }
+            
+            const details = eventData.details;
+            let detailsHtml = '';
+            
+            if (details.type === 'Purchase') {
+                detailsHtml = `<strong>${details.product}</strong> (${details.category}) - ${details.price} by ${details.user}`;
+            } else if (details.type === 'Product View') {
+                detailsHtml = `<strong>${details.product}</strong> (${details.category}) viewed by ${details.user}`;
+            } else if (details.type === 'User Rating') {
+                detailsHtml = `${details.rating} rating for ${details.category} by ${details.user}`;
+            } else if (details.type === 'Inventory Update') {
+                detailsHtml = `${details.category} stock: ${details.stock} at ${details.warehouse}`;
+            }
+            
+            // Create a new event element
+            const eventElement = document.createElement('div');
+            eventElement.className = 'border-bottom pb-2 mb-2 event-item';
+            eventElement.innerHTML = `
+                <div class="d-flex justify-content-between">
+                    <span class="text-primary fw-bold">${details.type}</span>
+                    <small class="text-muted">${eventData.timestamp}</small>
+                </div>
+                <div class="text-dark">${detailsHtml}</div>
+                <small class="text-muted">Event ID: ${eventData.event_id}</small>
+            `;
+            
+            // Add to the top of the log (prepend)
+            log.insertBefore(eventElement, log.firstChild);
+            
+            // Keep only last 100 events (increased from 50)
+            const events = log.querySelectorAll('.event-item');
+            if (events.length > 100) {
+                for (let i = 100; i < events.length; i++) {
+                    events[i].remove();
+                }
+            }
+            
+            // Update count more robustly
+            const currentCount = parseInt(count.textContent) || 0;
+            count.textContent = currentCount + 1;
+            console.log('📊 Updated published event count to:', count.textContent);
+            
+            // Keep scroll at top to see latest events
+            log.scrollTop = 0;
+            
+            // Process next item in queue after a small delay
+            setTimeout(processEventQueue, 20); // Slightly faster processing
+        }
+        
+        function logReceivedNotification(notificationData) {
+            console.log('🔔 logReceivedNotification called with:', notificationData);
+            
+            // Add to queue and process if not already processing
+            notificationUpdateQueue.push(notificationData);
+            if (!isUpdatingNotifications) {
+                processNotificationQueue();
+            }
+        }
+        
+        function processNotificationQueue() {
+            if (notificationUpdateQueue.length === 0) {
+                isUpdatingNotifications = false;
+                document.getElementById('notificationProcessingIndicator').style.display = 'none';
+                return;
+            }
+            
+            isUpdatingNotifications = true;
+            document.getElementById('notificationProcessingIndicator').style.display = 'inline-block';
+            const notificationData = notificationUpdateQueue.shift();
+            
+            const log = document.getElementById('receivedNotificationsLog');
+            const count = document.getElementById('receivedNotificationCount');
+            
+            if (!log || !count) {
+                console.error('❌ Could not find notification log elements:', { log: !!log, count: !!count });
+                // Continue processing queue
+                setTimeout(processNotificationQueue, 10);
+                return;
+            }
+            
+            // Remove "no notifications" message if it exists
+            const noNotificationsMessage = log.querySelector('.text-muted.text-center');
+            if (noNotificationsMessage) {
+                noNotificationsMessage.remove();
+            }
+            
+            const details = notificationData.details;
+            let detailsHtml = '';
+            
+            if (details.type === 'Purchase') {
+                detailsHtml = `<strong>${details.product}</strong> (${details.category}) - ${details.price} by ${details.user}`;
+            } else if (details.type === 'Product View') {
+                detailsHtml = `<strong>${details.product}</strong> (${details.category}) viewed by ${details.user}`;
+            } else if (details.type === 'User Rating') {
+                detailsHtml = `${details.rating} rating for ${details.category} by ${details.user}`;
+            } else if (details.type === 'Inventory Update') {
+                detailsHtml = `${details.category} stock: ${details.stock} at ${details.warehouse}`;
+            } else if (details.type === 'Complex Notification') {
+                detailsHtml = `${details.field}: ${details.value} (${details.window_size}s window)`;
+            }
+            
+            // Create a new notification element
+            const notificationElement = document.createElement('div');
+            notificationElement.className = 'border-bottom pb-2 mb-2 notification-item';
+            notificationElement.innerHTML = `
+                <div class="d-flex justify-content-between">
+                    <span class="text-success fw-bold">${notificationData.subscription_id}</span>
+                    <small class="text-muted">${notificationData.timestamp}</small>
+                </div>
+                <div class="text-dark">${detailsHtml}</div>
+                <small class="text-muted">Event ID: ${notificationData.event_id}</small>
+            `;
+            
+            // Add to the top of the log (prepend)
+            log.insertBefore(notificationElement, log.firstChild);
+            
+            // Keep only last 100 notifications (increased from 50)
+            const notifications = log.querySelectorAll('.notification-item');
+            if (notifications.length > 100) {
+                for (let i = 100; i < notifications.length; i++) {
+                    notifications[i].remove();
+                }
+            }
+            
+            // Update count more robustly
+            const currentCount = parseInt(count.textContent) || 0;
+            count.textContent = currentCount + 1;
+            console.log('📊 Updated received notification count to:', count.textContent);
+            
+            // Keep scroll at top to see latest notifications
+            log.scrollTop = 0;
+            
+            // Process next item in queue after a small delay
+            setTimeout(processNotificationQueue, 20); // Slightly faster processing
+        }
+
+        // Socket.IO event handlers for real-time logging
+        socket.on('event_published', function(eventData) {
+            console.log('📡 Received event_published:', eventData);
+            try {
+                logPublishedEvent(eventData);
+                console.log('✅ Successfully processed event_published');
+            } catch (error) {
+                console.error('❌ Error processing event_published:', error);
+            }
+        });
+        
+        socket.on('notification_received', function(notificationData) {
+            console.log('📡 Received notification_received:', notificationData);
+            try {
+                logReceivedNotification(notificationData);
+                console.log('✅ Successfully processed notification_received');
+            } catch (error) {
+                console.error('❌ Error processing notification_received:', error);
+            }
+        });
+
+        // Socket.IO event handlers
+        socket.on('stats_update', function(stats) {
+            console.log('📊 Received stats_update:', stats);
+            document.getElementById('eventsPublished').textContent = stats.events_published || 0;
+            document.getElementById('notificationsReceived').textContent = stats.notifications_received || 0;
+            document.getElementById('activeSubscriptions').textContent = stats.active_subscriptions || 0;
+            
+            // Calculate match rate
+            const matchRate = stats.events_published > 0 ? 
+                ((stats.notifications_received / stats.events_published) * 100).toFixed(1) : 0;
+            document.getElementById('matchRate').textContent = matchRate + '%';
+        });
+
+        // Enhanced clear function
+        function clearLog() {
+            document.getElementById('eventLog').innerHTML = '';
+            document.getElementById('publishedEventsLog').innerHTML = '<div class="text-muted text-center">No events published yet...</div>';
+            document.getElementById('receivedNotificationsLog').innerHTML = '<div class="text-muted text-center">No notifications received yet...</div>';
+            document.getElementById('publishedEventCount').textContent = '0';
+            document.getElementById('receivedNotificationCount').textContent = '0';
+            
+            // Clear the queues as well
+            eventUpdateQueue = [];
+            notificationUpdateQueue = [];
+            isUpdatingEvents = false;
+            isUpdatingNotifications = false;
+            document.getElementById('eventProcessingIndicator').style.display = 'none';
+            document.getElementById('notificationProcessingIndicator').style.display = 'none';
+        }
+
+        // Manual refresh function for event logs
+        function refreshEventLogs() {
+            console.log('🔄 Manually refreshing event logs...');
+            loadExistingLogs();
+        }
+
+        // Load existing logs on page load
+        function loadExistingLogs() {
+            fetch('/api/event-logs')
+            .then(response => response.json())
+            .then(data => {
+                console.log('📥 Loading existing logs:', data);
+                
+                const publishedLog = document.getElementById('publishedEventsLog');
+                const notificationsLog = document.getElementById('receivedNotificationsLog');
+                const publishedCount = document.getElementById('publishedEventCount');
+                const notificationsCount = document.getElementById('receivedNotificationCount');
+                
+                // Clear current logs first
+                publishedLog.innerHTML = '';
+                notificationsLog.innerHTML = '';
+                publishedCount.textContent = '0';
+                notificationsCount.textContent = '0';
+                
+                // Load published events (latest first)
+                if (data.published_events && data.published_events.length > 0) {
+                    data.published_events.reverse().forEach((eventData, index) => {
+                        const details = eventData.details;
+                        let detailsHtml = '';
+                        
+                        if (details.type === 'Purchase') {
+                            detailsHtml = `<strong>${details.product}</strong> (${details.category}) - ${details.price} by ${details.user}`;
+                        } else if (details.type === 'Product View') {
+                            detailsHtml = `<strong>${details.product}</strong> (${details.category}) viewed by ${details.user}`;
+                        } else if (details.type === 'User Rating') {
+                            detailsHtml = `${details.rating} rating for ${details.category} by ${details.user}`;
+                        } else if (details.type === 'Inventory Update') {
+                            detailsHtml = `${details.category} stock: ${details.stock} at ${details.warehouse}`;
+                        }
+                        
+                        const eventElement = document.createElement('div');
+                        eventElement.className = 'border-bottom pb-2 mb-2 event-item';
+                        eventElement.innerHTML = `
+                            <div class="d-flex justify-content-between">
+                                <span class="text-primary fw-bold">${details.type}</span>
+                                <small class="text-muted">${eventData.timestamp}</small>
+                            </div>
+                            <div class="text-dark">${detailsHtml}</div>
+                            <small class="text-muted">Event ID: ${eventData.event_id}</small>
+                        `;
+                        
+                        publishedLog.appendChild(eventElement);
+                    });
+                    publishedCount.textContent = data.published_events.length;
+                } else {
+                    publishedLog.innerHTML = '<div class="text-muted text-center">No events published yet...</div>';
+                }
+                
+                // Load received notifications (latest first)
+                if (data.received_notifications && data.received_notifications.length > 0) {
+                    data.received_notifications.reverse().forEach((notificationData, index) => {
+                        const details = notificationData.details;
+                        let detailsHtml = '';
+                        
+                        if (details.type === 'Purchase') {
+                            detailsHtml = `<strong>${details.product}</strong> (${details.category}) - ${details.price} by ${details.user}`;
+                        } else if (details.type === 'Product View') {
+                            detailsHtml = `<strong>${details.product}</strong> (${details.category}) viewed by ${details.user}`;
+                        } else if (details.type === 'User Rating') {
+                            detailsHtml = `${details.rating} rating for ${details.category} by ${details.user}`;
+                        } else if (details.type === 'Inventory Update') {
+                            detailsHtml = `${details.category} stock: ${details.stock} at ${details.warehouse}`;
+                        } else if (details.type === 'Complex Notification') {
+                            detailsHtml = `${details.field}: ${details.value} (${details.window_size}s window)`;
+                        }
+                        
+                        const notificationElement = document.createElement('div');
+                        notificationElement.className = 'border-bottom pb-2 mb-2 notification-item';
+                        notificationElement.innerHTML = `
+                            <div class="d-flex justify-content-between">
+                                <span class="text-success fw-bold">${notificationData.subscription_id}</span>
+                                <small class="text-muted">${notificationData.timestamp}</small>
+                            </div>
+                            <div class="text-dark">${detailsHtml}</div>
+                            <small class="text-muted">Event ID: ${notificationData.event_id}</small>
+                        `;
+                        
+                        notificationsLog.appendChild(notificationElement);
+                    });
+                    notificationsCount.textContent = data.received_notifications.length;
+                } else {
+                    notificationsLog.innerHTML = '<div class="text-muted text-center">No notifications received yet...</div>';
+                }
+                
+                logEvent(`📥 Loaded ${data.published_events.length} events and ${data.received_notifications.length} notifications`, 'info');
+            })
+            .catch(error => {
+                console.error('Error loading existing logs:', error);
+                logEvent(`❌ Failed to load existing logs: ${error}`, 'error');
+            });
+        }
+        
+        // Initial status update
+        updateSystemStatus(false);
+        logEvent('🌐 Dashboard loaded. Click "Start System" to begin!', 'info');
+        
+        // Load existing logs when page loads
+        loadExistingLogs();
+    </script>
+</body>
+</html> 
